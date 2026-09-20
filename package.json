@@ -1,0 +1,20 @@
+{
+  "name": "vyaya",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vyaya — token-waste auditor for LLM APIs. See what your LLM spend is actually buying.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "2.11.2",
+    "typescript": "5.9.3"
+  }
+}
