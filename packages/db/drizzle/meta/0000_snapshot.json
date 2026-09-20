@@ -274,7 +274,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
           "where": "revoked_at IS NULL",
           "concurrently": false,
           "method": "btree",
