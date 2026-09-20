@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Vyaya design tokens (hard UI rules):
+ *   - Light background #F5F0EB, dark background #1A1A1A, user toggle.
+ *   - One solid primary (green) + one accent (burnt orange). No gradients.
+ *   - Five type sizes, nothing else: micro / small / body / title / hero.
+ *   - Radius limited to 6px (rounded-md) and 8px (rounded-lg), 1px borders.
+ *   - Subtle gray shadows on interactive elements only.
+ */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-ink: var(--primary-ink);
+  --color-accent: var(--accent);
+  --color-track: var(--track);
+}
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --text-micro: 0.75rem;
+  --text-micro--line-height: 1.1rem;
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.35rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.55rem;
+  --text-title: 1.5rem;
+  --text-title--line-height: 1.9rem;
+  --text-hero: 2.25rem;
+  --text-hero--line-height: 2.6rem;
+
+  --shadow-interactive: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+:root {
+  --bg: #f5f0eb;
+  --surface: #fffdf9;
+  --border: #ddd3c6;
+  --ink: #1a1a1a;
+  --muted: #6b6257;
+  --primary: #1f6a4d;
+  --primary-ink: #ffffff;
+  --accent: #c24e2e;
+  --track: #e7dfd4;
+}
+
+.dark {
+  --bg: #1a1a1a;
+  --surface: #242424;
+  --border: #3a3a3a;
+  --ink: #f5f0eb;
+  --muted: #a79f93;
+  --primary: #4caf82;
+  --primary-ink: #10231b;
+  --accent: #d85c35;
+  --track: #333333;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
