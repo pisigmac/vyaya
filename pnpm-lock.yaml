@@ -2696,6 +2696,7 @@ snapshots:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.11.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.11.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace': 2.11.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1)':
@@ -3040,6 +3041,7 @@ snapshots:
       '@esbuild/linux-s390x': 0.25.12
       '@esbuild/linux-x64': 0.25.12
       '@esbuild/netbsd-arm64': 0.25.12
+      '@esbuild/netbsd-x64': 0.25.12
       '@esbuild/openbsd-arm64': 0.25.12
       '@esbuild/openbsd-x64': 0.25.12
       '@esbuild/openharmony-arm64': 0.25.12
@@ -3068,6 +3070,7 @@ snapshots:
       '@esbuild/linux-s390x': 0.28.2
       '@esbuild/linux-x64': 0.28.2
       '@esbuild/netbsd-arm64': 0.28.2
+      '@esbuild/netbsd-x64': 0.28.2
       '@esbuild/openbsd-arm64': 0.28.2
       '@esbuild/openbsd-x64': 0.28.2
       '@esbuild/openharmony-arm64': 0.28.2
