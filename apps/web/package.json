@@ -1,0 +1,36 @@
+{
+  "name": "@vyaya/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vyaya web app: landing, auth, onboarding, dashboard and settings. Next.js App Router with BFF route handlers over @vyaya/db.",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@vyaya/config": "workspace:*",
+    "@vyaya/core": "workspace:*",
+    "@vyaya/db": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "next": "16.3.5",
+    "postgres": "3.4.9",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.13.6",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitest/coverage-v8": "5.0.1",
+    "@vyaya/mock-deskid": "workspace:*",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}
