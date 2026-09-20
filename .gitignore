@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+.env
+.env.local
+.env.*.local
+*.pem
+# ICU 60 test-support libraries are fetched on demand (see
+# packages/db/test-support/icu60/README.md) — never commit the binaries.
+/packages/db/test-support/icu60/*.so.60
+*.log
+.DS_Store
+reports/
+.deskid/
