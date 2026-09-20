@@ -1,0 +1,60 @@
+{
+  "name": "@vyaya/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Drizzle ORM schemas, generated migrations, RLS policies, client helpers and dev seed for the Vyaya Postgres database.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./api-keys": {
+      "types": "./dist/api-keys.d.ts",
+      "import": "./dist/api-keys.js"
+    },
+    "./test-support/embedded-pg": {
+      "types": "./dist/test-support/embedded-pg.d.ts",
+      "import": "./dist/test-support/embedded-pg.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "drizzle",
+    "rls"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "drizzle-kit generate",
+    "migrate": "node dist/migrate.js",
+    "seed": "node dist/seed.js"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.2.1",
+    "@vyaya/config": "workspace:*",
+    "@vyaya/core": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@vitest/coverage-v8": "5.0.1",
+    "drizzle-kit": "0.31.10",
+    "embedded-postgres": "16.14.0-beta.17",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}
