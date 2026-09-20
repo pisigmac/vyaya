@@ -1,0 +1,55 @@
+{
+  "name": "@vyaya/proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Observe-only OpenAI-compatible LLM traffic proxy. Streams passthrough, fire-and-forget request logging, per-key auth and rate limits.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-trace-node": "2.11.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "@vyaya/config": "workspace:*",
+    "@vyaya/core": "workspace:*",
+    "@vyaya/db": "workspace:*",
+    "ajv": "8.20.0",
+    "hono": "4.13.8",
+    "ioredis": "5.11.1",
+    "pino": "10.3.1",
+    "postgres": "3.4.9",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@vitest/coverage-v8": "5.0.1",
+    "@vyaya/mock-openai": "workspace:*",
+    "embedded-postgres": "16.14.0-beta.17",
+    "ioredis-mock": "8.13.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}
