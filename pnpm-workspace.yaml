@@ -1,0 +1,21 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  '@embedded-postgres/linux-x64': set this to true or false
+  esbuild: set this to true or false
+
+# pnpm blocks dependency postinstall scripts by default. The
+# @embedded-postgres/* platform packages need their postinstall to download
+# the user-space Postgres 16 binaries (from Maven Central) used by @vyaya/db
+# integration tests. esbuild's postinstall validates its platform binary
+# (drizzle-kit shells out to it).
+onlyBuiltDependencies:
+  - "@embedded-postgres/linux-x64"
+  - esbuild
+
+# GHSA-67mh-4wv8-2f99: drizzle-kit pulls esbuild ~0.18.20 through the
+# deprecated @esbuild-kit/core-utils chain. Pin it to the patched line.
+overrides:
+  "@esbuild-kit/core-utils>esbuild": "0.25.12"

@@ -1,0 +1,48 @@
+# Dependencies and package-manager caches.
+node_modules/
+.pnpm-store/
+
+# Generated builds, caches, and test artifacts.
+dist/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Local environment and credentials; keep the configuration template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.deskid/
+.editorconfig
+.npmrc
+
+# Local planning and agent workspace state.
+/backlog.d/
+/decision_audit.md
+/.agents/
+/.codex/
+
+# Runtime reports, logs, and scratch files.
+/reports/
+/tmp/
+/temp/
+*.log
+*.pid
+
+# ICU 60 test-support libraries are fetched on demand (see
+# packages/db/test-support/icu60/README.md) — never commit the binaries.
+/packages/db/test-support/icu60/*.so.60
+
+# Editor and operating-system files.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

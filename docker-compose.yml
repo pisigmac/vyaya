@@ -1,0 +1,313 @@
+# Vyaya — full dev stack. See docs/DEPLOY.md for the runbook.
+#
+# Default profile: postgres, redis, mock-openai, proxy, worker, web.
+#   Identity is NOT started by default — pick one profile:
+#     mock-deskid  dev identity (apps/mock-deskid, AUTH_MODE=dev). Dev default.
+#     deskid       real DeskId built from git (pinned commit), AUTH_MODE=deskid.
+#   Optional analytics sink:
+#     clickhouse   ClickHouse server; set CLICKHOUSE_URL to use it.
+#
+#   COMPOSE_PROFILES=mock-deskid docker compose up --build
+# (or set COMPOSE_PROFILES in .env — see .env.example).
+#
+# App services read .env via env_file; the `environment:` blocks below only
+# re-point host addresses (localhost) at compose-internal service names.
+
+name: vyaya
+
+networks:
+  vyaya:
+
+volumes:
+  pgdata:
+  deskid-pgdata:
+  mock-deskid-keys:
+  reports:
+  clickhouse-data:
+
+services:
+  # ------------------------------------------------------------------ data
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vyaya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vyaya}
+      POSTGRES_DB: ${POSTGRES_DB:-vyaya}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [vyaya]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [vyaya]
+
+  # ------------------------------------------------- dev doubles (mock APIs)
+  mock-openai:
+    build:
+      context: .
+      dockerfile: apps/mock-openai/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MOCK_OPENAI_PORT: "8788"
+    ports:
+      - "8788:8788"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8788/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [vyaya]
+
+  mock-deskid:
+    profiles: ["mock-deskid"]
+    build:
+      context: .
+      dockerfile: apps/mock-deskid/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # The mock refuses to boot unless AUTH_MODE=dev — set it explicitly so
+      # a stray .env can never start the mock in deskid mode.
+      AUTH_MODE: dev
+      MOCK_DESKID_PORT: "8091"
+      # Issuer must match DESKID_ISSUER the other services verify against.
+      MOCK_DESKID_ISSUER: ${DESKID_ISSUER:-http://localhost:8091}
+      AUTH_SPA_CALLBACK_URL: ${AUTH_SPA_CALLBACK_URL:-http://localhost:3000/auth/callback}
+      # Keys persist across container restarts on this volume (image dir is
+      # pre-chowned to node). Recreating the volume rotates the keyring and
+      # invalidates every outstanding token/session.
+      MOCK_DESKID_KEYS_DIR: /app/keys
+    volumes:
+      - mock-deskid-keys:/app/keys
+    ports:
+      - "8091:8091"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8091/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [vyaya]
+
+  # ------------------------------------------------------- real DeskId (opt-in)
+  # Built from upstream git, pinned to a commit. Mirrors upstream's own
+  # docker-compose.yml (dedicated postgres, env names, /run/secrets key
+  # mounts); the one documented divergence is sharing our redis (logical db 1)
+  # instead of running a second redis container.
+  # Prereq: scripts/deskid-keygen.sh (or your own RSA pair) — see docs/DEPLOY.md.
+  deskid-db:
+    profiles: ["deskid"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth
+      POSTGRES_DB: auth
+    volumes:
+      - deskid-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth -d auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [vyaya]
+
+  deskid:
+    profiles: ["deskid"]
+    build:
+      # Pinned commit of https://github.com/pisigmac/DeskId (main @ 2026-09-06).
+      context: https://github.com/pisigmac/DeskId.git#77c0f056b7dd088fbe66963fa6904978098e9044
+    restart: unless-stopped
+    # DeskId's rate limiter is per-process; never scale beyond 1 replica.
+    deploy:
+      replicas: 1
+    environment:
+      AUTH_DATABASE_URL: postgresql+psycopg://auth:auth@deskid-db:5432/auth
+      # iss claim DeskId signs with; MUST equal DESKID_ISSUER in .env.
+      AUTH_ISSUER: ${DESKID_ISSUER:-http://localhost:8090}
+      AUTH_HOST: 0.0.0.0
+      AUTH_PORT: "8090"
+      AUTH_RATE_LIMIT_ENABLED: "true"
+      AUTH_RATE_LIMIT_BACKEND: redis
+      AUTH_RATE_LIMIT_REDIS_URL: redis://redis:6379/1
+      AUTH_RATE_LIMIT_FAIL_CLOSED: "true"
+      AUTH_CORS_ORIGINS: http://localhost:3000
+      AUTH_SPA_CALLBACK_URL: http://localhost:3000/auth/callback
+      AUTH_OPEN_REGISTRATION: ${DESKID_OPEN_REGISTRATION:-true}
+      AUTH_BOOTSTRAP_TOKEN: ${DESKID_BOOTSTRAP_TOKEN:-}
+      # Auto-grant the vyaya audience to new users (alternative: web calls
+      # POST /v1/admin/grants after onboarding — both paths documented in
+      # docs/INTEGRATIONS.md).
+      AUTH_DEFAULT_AUDIENCES: vyaya
+      AUTH_JWT_PRIVATE_KEY_FILE: /run/secrets/auth_private.pem
+      AUTH_JWT_PUBLIC_KEY_FILE: /run/secrets/auth_public.pem
+      AUTH_GOOGLE_CLIENT_ID: ${DESKID_GOOGLE_CLIENT_ID:-}
+      AUTH_GOOGLE_CLIENT_SECRET: ${DESKID_GOOGLE_CLIENT_SECRET:-}
+      AUTH_GITHUB_CLIENT_ID: ${DESKID_GITHUB_CLIENT_ID:-}
+      AUTH_GITHUB_CLIENT_SECRET: ${DESKID_GITHUB_CLIENT_SECRET:-}
+    volumes:
+      - ${DESKID_JWT_PRIVATE_KEY_FILE:-./.deskid/private.pem}:/run/secrets/auth_private.pem:ro
+      - ${DESKID_JWT_PUBLIC_KEY_FILE:-./.deskid/public.pem}:/run/secrets/auth_public.pem:ro
+    ports:
+      - "8090:8090"
+    depends_on:
+      deskid-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [vyaya]
+
+  # ---------------------------------------------------- ClickHouse (opt-in)
+  clickhouse:
+    profiles: ["clickhouse"]
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [vyaya]
+
+  # ------------------------------------------------------------ Vyaya apps
+  proxy:
+    build:
+      context: .
+      dockerfile: apps/proxy/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PROXY_PORT: "8787"
+      DATABASE_URL: postgres://${POSTGRES_USER:-vyaya}:${POSTGRES_PASSWORD:-vyaya}@postgres:5432/${POSTGRES_DB:-vyaya}
+      REDIS_URL: redis://redis:6379
+      OPENAI_BASE_URL: ${COMPOSE_UPSTREAM_BASE_URL:-http://mock-openai:8788}
+      # JWKS fetch happens server-side: must resolve inside the network.
+      # mock-deskid default; set http://deskid:8090/.well-known/jwks.json
+      # (via .env) when running the deskid profile.
+      DESKID_JWKS_URL: ${DESKID_JWKS_URL_INTERNAL:-http://mock-deskid:8091/.well-known/jwks.json}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
+    ports:
+      - "8787:8787"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-openai:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8787/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [vyaya]
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WORKER_PORT: "8790"
+      DATABASE_URL: postgres://${POSTGRES_USER:-vyaya}:${POSTGRES_PASSWORD:-vyaya}@postgres:5432/${POSTGRES_DB:-vyaya}
+      REDIS_URL: redis://redis:6379
+      DESKID_JWKS_URL: ${DESKID_JWKS_URL_INTERNAL:-http://mock-deskid:8091/.well-known/jwks.json}
+      DESKID_BASE_URL: ${DESKID_BASE_URL_INTERNAL:-http://mock-deskid:8091}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-}
+      REPORT_OUTPUT_DIR: /app/reports
+    volumes:
+      - reports:/app/reports
+    ports:
+      - "8790:8790"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8790/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [vyaya]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WEB_PORT: "3000"
+      DATABASE_URL: postgres://${POSTGRES_USER:-vyaya}:${POSTGRES_PASSWORD:-vyaya}@postgres:5432/${POSTGRES_DB:-vyaya}
+      REDIS_URL: redis://redis:6379
+      # Server-side JWKS fetch must use the internal URL...
+      DESKID_JWKS_URL: ${DESKID_JWKS_URL_INTERNAL:-http://mock-deskid:8091/.well-known/jwks.json}
+      # ...while DESKID_BASE_URL stays browser-facing (login page links).
+      # The server-side audience-grant call to it is best-effort and never
+      # blocks onboarding (mock tokens already carry the vyaya audience).
+      DESKID_BASE_URL: ${DESKID_BASE_URL:-http://localhost:8091}
+      PROXY_BASE_URL: http://proxy:8787
+      AUTH_SPA_CALLBACK_URL: ${AUTH_SPA_CALLBACK_URL:-http://localhost:3000/auth/callback}
+      # Reports PDF volume is shared with the worker (read-only here).
+      REPORT_OUTPUT_DIR: /app/reports
+      # WORKER_CLI_PATH stays unset in compose: the dev-only
+      # "run the classifier now" button then returns the manual command.
+      WORKER_CLI_PATH: ""
+    volumes:
+      - reports:/app/reports:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      proxy:
+        condition: service_started
+    healthcheck:
+      # No dedicated route; the public landing page is the liveness signal.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [vyaya]

@@ -1,0 +1,967 @@
+openapi: 3.1.0
+info:
+  title: Vyaya API
+  version: 0.1.0
+  description: >-
+    Token-waste auditor for LLM APIs. Covers the observe-only proxy
+    (OpenAI-compatible passthrough), the web app's backend-for-frontend
+    routes (session cookie auth), and the worker health endpoint. Dev-only
+    mock services (mock-openai, mock-deskid) are documented in docs/API.md.
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:8787
+    description: Proxy (dev)
+  - url: http://localhost:3000
+    description: Web BFF (dev)
+  - url: http://localhost:8790
+    description: Worker health (dev)
+tags:
+  - name: proxy
+    description: OpenAI-compatible observe-only proxy.
+  - name: auth
+    description: Web session lifecycle.
+  - name: keys
+    description: Workspace API keys.
+  - name: stats
+    description: Dashboard statistics.
+  - name: onboarding
+    description: First-run flow.
+  - name: reports
+    description: Weekly waste reports.
+  - name: settings
+    description: Workspace settings.
+  - name: worker
+    description: Worker health.
+
+paths:
+  /healthz:
+    get:
+      tags: [proxy]
+      summary: Proxy health (also worker health on port 8790)
+      description: >-
+        On the proxy, reports the log-sink retry-queue metrics. Always 200
+        and status ok even when the database is down - watch the queue
+        numbers. On the worker (port 8790), returns per-job run statuses.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ProxyHealth"
+                  - $ref: "#/components/schemas/WorkerHealth"
+        "404":
+          description: Unknown path (worker only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /v1/chat/completions:
+    post:
+      tags: [proxy]
+      summary: Proxy a chat completion
+      description: >-
+        Byte-faithful passthrough to the configured upstream (OpenAI or a
+        KubeMind router), streamed end-to-end. The proxy logs metadata and
+        cost after the client has the bytes. SSE streaming is supported;
+        include stream_options.include_usage so usage comes from the
+        provider instead of an estimate.
+      operationId: proxyChatCompletions
+      parameters:
+        - $ref: "#/components/parameters/XVyayaRequestId"
+        - $ref: "#/components/parameters/XVyayaSession"
+        - $ref: "#/components/parameters/XVyayaTag"
+        - $ref: "#/components/parameters/XVyayaRetryAttempt"
+        - $ref: "#/components/parameters/XVyayaRetryOf"
+        - $ref: "#/components/parameters/XVyayaConsumed"
+      security:
+        - vyayaApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Upstream response, buffered or SSE.
+          headers:
+            x-vyaya-request-id:
+              schema:
+                type: string
+              description: Assigned or echoed correlation id.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Standard OpenAI chat completion object.
+            text/event-stream:
+              schema:
+                type: string
+                description: OpenAI SSE chunk stream.
+        "401":
+          $ref: "#/components/responses/ProxyUnauthorized"
+        "429":
+          $ref: "#/components/responses/ProxyRateLimited"
+        "502":
+          $ref: "#/components/responses/ProxyUpstreamUnavailable"
+        "503":
+          $ref: "#/components/responses/ProxyAuthUnavailable"
+
+  /v1/embeddings:
+    post:
+      tags: [proxy]
+      summary: Proxy an embeddings call
+      description: Passthrough for OpenAI embeddings. Input tokens only.
+      operationId: proxyEmbeddings
+      parameters:
+        - $ref: "#/components/parameters/XVyayaRequestId"
+        - $ref: "#/components/parameters/XVyayaTag"
+      security:
+        - vyayaApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model:
+                  type: string
+                  example: text-embedding-3-small
+                input:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+      responses:
+        "200":
+          description: Upstream embeddings response.
+          headers:
+            x-vyaya-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/ProxyUnauthorized"
+        "429":
+          $ref: "#/components/responses/ProxyRateLimited"
+        "502":
+          $ref: "#/components/responses/ProxyUpstreamUnavailable"
+        "503":
+          $ref: "#/components/responses/ProxyAuthUnavailable"
+
+  /api/auth/session:
+    get:
+      tags: [auth]
+      summary: Who am I
+      operationId: getSession
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current session.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      sub: { type: string }
+                      email: { type: string, format: email }
+                      role: { $ref: "#/components/schemas/Role" }
+                      workspaceId: { type: string, format: uuid }
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/auth/logout:
+    get:
+      tags: [auth]
+      summary: Log out
+      operationId: logout
+      responses:
+        "307":
+          description: Clears the session cookie and redirects to /.
+
+  /api/keys:
+    get:
+      tags: [keys]
+      summary: List API keys
+      operationId: listKeys
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: All keys for the session workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiKeyView"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+    post:
+      tags: [keys]
+      summary: Create an API key
+      description: Plaintext is returned once and never stored.
+      operationId: createKey
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+      responses:
+        "201":
+          description: Created key, including the one-time plaintext.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiKeyView"
+                  - type: object
+                    properties:
+                      plaintext:
+                        type: string
+                        pattern: "^vy_live_[0-9a-f]{64}$"
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "403":
+          $ref: "#/components/responses/WebForbidden"
+
+  /api/keys/{id}/revoke:
+    post:
+      tags: [keys]
+      summary: Revoke a key (soft delete)
+      operationId: revokeKey
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The revoked key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    $ref: "#/components/schemas/ApiKeyView"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "403":
+          $ref: "#/components/responses/WebForbidden"
+        "404":
+          description: Unknown or already revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /api/keys/{id}/rotate:
+    post:
+      tags: [keys]
+      summary: Rotate a key
+      description: Revokes the old key and issues a new one with the same name, atomically.
+      operationId: rotateKey
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201":
+          description: The new key, including the one-time plaintext.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiKeyView"
+                  - type: object
+                    properties:
+                      plaintext: { type: string }
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "403":
+          $ref: "#/components/responses/WebForbidden"
+        "404":
+          description: Unknown or already revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /api/stats/summary:
+    get:
+      tags: [stats]
+      summary: 30-day headline numbers
+      operationId: getStatsSummary
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Spend, waste, and waste rate over 30 days.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsSummary"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/stats/trend:
+    get:
+      tags: [stats]
+      summary: Daily spend vs waste
+      operationId: getStatsTrend
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 7, maximum: 90, default: 30 }
+      responses:
+        "200":
+          description: One point per UTC day, ascending.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days: { type: integer }
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        day: { type: string, format: date }
+                        spendUsd: { type: number }
+                        wastedUsd: { type: number }
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/stats/breakdown:
+    get:
+      tags: [stats]
+      summary: Waste breakdown by dimension
+      operationId: getStatsBreakdown
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: dimension
+          in: query
+          schema:
+            type: string
+            enum: [waste_type, endpoint, feature_tag]
+            default: waste_type
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 90, default: 30 }
+      responses:
+        "200":
+          description: Slices sorted by dollars wasted, descending.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dimension: { type: string }
+                  days: { type: integer }
+                  slices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        dollarsWasted: { type: number }
+                        eventCount: { type: integer }
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/waste-events:
+    get:
+      tags: [stats]
+      summary: Paginated waste events
+      operationId: listWasteEvents
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [dollars, recent], default: dollars }
+        - name: wasteType
+          in: query
+          schema:
+            $ref: "#/components/schemas/WasteType"
+      responses:
+        "200":
+          description: A page of waste events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WasteEventPage"
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/fixes:
+    get:
+      tags: [stats]
+      summary: Top 3 fixes by projected annual savings
+      operationId: getTopFixes
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Ranked fixes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fixes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TopFix"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/onboarding/workspace:
+    get:
+      tags: [onboarding]
+      summary: Onboarding progress
+      operationId: getOnboardingWorkspace
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Workspace identity plus flow counters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspace:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+                      slug: { type: string }
+                  requestCount: { type: integer }
+                  wasteEventCount: { type: integer }
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/onboarding/test-request:
+    post:
+      tags: [onboarding]
+      summary: Send one real request through the proxy
+      operationId: sendTestRequest
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [apiKey]
+              properties:
+                apiKey:
+                  type: string
+                  pattern: "^vy_live_[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Outcome of the test call.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { type: integer }
+                  latencyMs: { type: integer }
+                  model: { type: string, example: gpt-4o-mini }
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "502":
+          description: Proxy unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /api/onboarding/classify:
+    post:
+      tags: [onboarding]
+      summary: Run the classifier now (dev only)
+      description: >-
+        Spawns the worker's one-shot classify job. 403 unless
+        AUTH_MODE=dev; 503 with the manual command when WORKER_CLI_PATH is
+        unset.
+      operationId: runClassifierNow
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The run outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ran: { type: boolean }
+                  detail: { type: string }
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "403":
+          $ref: "#/components/responses/WebForbidden"
+        "503":
+          description: WORKER_CLI_PATH not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /api/reports:
+    get:
+      tags: [reports]
+      summary: List weekly reports
+      operationId: listReports
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Reports, newest week first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ReportView"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+
+  /api/reports/{id}:
+    get:
+      tags: [reports]
+      summary: Download a report PDF
+      operationId: getReportPdf
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The PDF bytes.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "404":
+          description: No PDF, path escape, or missing file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebError"
+
+  /api/settings/workspace:
+    get:
+      tags: [settings]
+      summary: Read workspace settings
+      operationId: getWorkspaceSettings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceSettings"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+    patch:
+      tags: [settings]
+      summary: Update workspace settings
+      description: At least one field required. featureTags replaces the allowlist wholesale.
+      operationId: updateWorkspaceSettings
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logBodiesEnabled: { type: boolean }
+                reportEmail:
+                  oneOf:
+                    - { type: string, format: email }
+                    - { type: string, maxLength: 0 }
+                    - { type: "null" }
+                featureTags:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: string
+                    pattern: "^[a-z0-9][a-z0-9-_]{0,63}$"
+      responses:
+        "200":
+          description: The updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceSettings"
+        "400":
+          $ref: "#/components/responses/WebBadRequest"
+        "401":
+          $ref: "#/components/responses/WebUnauthorized"
+        "403":
+          $ref: "#/components/responses/WebForbidden"
+
+components:
+  securitySchemes:
+    vyayaApiKey:
+      type: apiKey
+      in: header
+      name: X-Vyaya-Key
+      description: Workspace API key (vy_live_ + 64 hex chars).
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: vyaya_session
+      description: HMAC-signed session cookie set by /auth/callback.
+
+  parameters:
+    XVyayaRequestId:
+      name: X-Vyaya-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+      description: Client correlation id. Malformed values are ignored.
+    XVyayaSession:
+      name: X-Vyaya-Session
+      in: header
+      required: false
+      schema: { type: string, maxLength: 256 }
+      description: Session id; groups turns for context_amnesia.
+    XVyayaTag:
+      name: X-Vyaya-Tag
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+      description: Feature tag; validated against the workspace allowlist.
+    XVyayaRetryAttempt:
+      name: X-Vyaya-Retry-Attempt
+      in: header
+      required: false
+      schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      description: Retry index. 0 = first attempt.
+    XVyayaRetryOf:
+      name: X-Vyaya-Retry-Of
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+      description: Request id of the first attempt in a retry chain.
+    XVyayaConsumed:
+      name: X-Vyaya-Consumed
+      in: header
+      required: false
+      schema: { type: string, enum: ["true", "false", "0", "1", "no", "yes"] }
+      description: Downstream-consumption signal for ghost_output.
+
+  responses:
+    ProxyUnauthorized:
+      description: Missing, invalid, or revoked API key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProxyError"
+          examples:
+            missing:
+              value:
+                error:
+                  message: missing X-Vyaya-Key header
+                  type: invalid_request_error
+                  param: null
+                  code: missing_api_key
+            invalid:
+              value:
+                error:
+                  message: invalid or revoked API key
+                  type: invalid_request_error
+                  param: null
+                  code: invalid_api_key
+    ProxyRateLimited:
+      description: Per-key sliding window exceeded.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds until the oldest in-window request ages out.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProxyError"
+    ProxyAuthUnavailable:
+      description: Auth backend down and key not cached. Fail-closed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProxyError"
+    ProxyUpstreamUnavailable:
+      description: The upstream fetch itself failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProxyError"
+    WebUnauthorized:
+      description: No valid session cookie.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebError"
+          example:
+            error: not signed in
+    WebForbidden:
+      description: Role can't do that.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebError"
+          example:
+            error: viewers are read-only
+    WebBadRequest:
+      description: Zod validation failure; message lists the issues.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WebError"
+
+  schemas:
+    ProxyError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type:
+              type: string
+              enum: [invalid_request_error, rate_limit_error, server_error]
+            param: { type: "null" }
+            code:
+              type: string
+              nullable: true
+              enum: [missing_api_key, invalid_api_key, auth_unavailable, rate_limit_exceeded, upstream_unavailable, null]
+    WebError:
+      type: object
+      properties:
+        error: { type: string }
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+    WasteType:
+      type: string
+      enum:
+        - ghost_output
+        - retry_storm
+        - schema_failure_burn
+        - context_amnesia
+        - overprovisioned_max_tokens
+    ProxyHealth:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        service: { type: string, enum: [vyaya-proxy] }
+        queue:
+          type: object
+          properties:
+            enqueued: { type: integer }
+            written: { type: integer }
+            droppedBackpressure: { type: integer }
+            droppedExhausted: { type: integer }
+            writeFailures: { type: integer }
+            flushCount: { type: integer }
+            queueDepth: { type: integer }
+    WorkerHealth:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        service: { type: string, enum: [vyaya-worker] }
+        uptimeSec: { type: integer }
+        jobs:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                enum: [classify, weekly-report, retention-sweeper, deskid-reconcile]
+              enabled: { type: boolean }
+              running: { type: boolean }
+              runs: { type: integer }
+              failures: { type: integer }
+              lastStartedAt: { type: string, format: date-time, nullable: true }
+              lastFinishedAt: { type: string, format: date-time, nullable: true }
+              lastOutcome:
+                type: string
+                nullable: true
+                enum: [ok, failed, skipped_locked, null]
+              lastError: { type: string, nullable: true }
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string, example: gpt-4o-mini }
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [system, user, assistant, tool] }
+              content: { type: string }
+        max_tokens: { type: integer }
+        stream: { type: boolean }
+        stream_options:
+          type: object
+          properties:
+            include_usage: { type: boolean }
+        response_format:
+          type: object
+          description: json_object or json_schema; the proxy validates the response against it.
+    ApiKeyView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        last4: { type: string, minLength: 4, maxLength: 4 }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        revokedAt: { type: string, format: date-time, nullable: true }
+    StatsSummary:
+      type: object
+      properties:
+        days: { type: integer, example: 30 }
+        totalSpendUsd: { type: number, example: 0.1492 }
+        dollarsWasted: { type: number, example: 0.0942 }
+        wasteRate:
+          type: number
+          description: dollars_wasted / total_spend; 0 when there is no spend.
+          example: 0.6311
+        requestCount: { type: integer, example: 106 }
+        wasteEventCount: { type: integer, example: 20 }
+    WasteEventPage:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              wasteType: { $ref: "#/components/schemas/WasteType" }
+              dollarsWasted: { type: number }
+              evidence:
+                type: object
+                additionalProperties: true
+                description: Detector-specific justification (why this is waste).
+              suggestedFix: { type: string }
+              detectedAt: { type: string, format: date-time }
+              requestIds:
+                type: array
+                items: { type: string }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+    TopFix:
+      type: object
+      properties:
+        wasteType: { $ref: "#/components/schemas/WasteType" }
+        suggestedFix: { type: string }
+        dollarsWasted30d: { type: number }
+        projectedAnnualSavingsUsd:
+          type: number
+          description: (30-day waste / 30) * 365.
+        eventCount: { type: integer }
+    ReportView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        weekStart: { type: string, format: date }
+        weekEnd: { type: string, format: date }
+        totalSpendUsd: { type: number }
+        dollarsWasted: { type: number }
+        wasteRate: { type: number }
+        topWasteType:
+          $ref: "#/components/schemas/WasteType"
+          nullable: true
+        status: { type: string, enum: [generated, emailed, failed] }
+        emailSentAt: { type: string, format: date-time, nullable: true }
+        hasPdf: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    WorkspaceSettings:
+      type: object
+      properties:
+        name: { type: string }
+        slug: { type: string }
+        logBodiesEnabled: { type: boolean }
+        reportEmail: { type: string, format: email, nullable: true }
+        featureTags:
+          type: array
+          items: { type: string }

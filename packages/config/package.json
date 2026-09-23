@@ -1,0 +1,32 @@
+{
+  "name": "@vyaya/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zod-validated environment configuration for every Vyaya service. The only package that reads process.env.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@vitest/coverage-v8": "5.0.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}

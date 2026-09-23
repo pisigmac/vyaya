@@ -1,0 +1,41 @@
+{
+  "name": "@vyaya/mock-openai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic OpenAI-compatible mock upstream for Vyaya development. Deterministic token counts, latency knobs, failure injection, SSE streaming.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@vyaya/config": "workspace:*",
+    "hono": "4.13.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@vitest/coverage-v8": "5.0.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  }
+}
